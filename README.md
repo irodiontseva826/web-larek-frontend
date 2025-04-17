@@ -89,7 +89,7 @@ type TProductInBasket = Pick<IProduct, 'id' | 'title' | 'price'>
 Общая информация о заказе.
 
 ```
-type TOrderInfo = Omit<IOrder, 'items'>
+type TOrderInfo = Omit<IOrder, 'total' | 'items'>
 ```
 
 ### TOrderData
@@ -154,7 +154,7 @@ type TOrderContacts = Pick<IOrder, 'email' | 'phone'>
 - `setDisabled(element: HTMLElement, state: boolean): void` - изменяет статус блокировки у элемента;
 - `setHidden(element: HTMLElement): void` - скрывает элемент;
 - `setVisible(element: HTMLElement): void` - показывает элемент;
-- `setImage(element: HTMLImageElement, src: string, alt?: string)` - устанавливает изображение с алтернативным текстом;
+- `setImage(element: HTMLImageElement, src: string, alt?: string): void` - устанавливает изображение с алтернативным текстом;
 - `render(data?: Partial<T>): HTMLElement` - отображает переданные данные.
 
 ### Слой данных (Model)
@@ -166,12 +166,12 @@ type TOrderContacts = Pick<IOrder, 'email' | 'phone'>
 Поля:
 
 - `_products: IProduct[]` - массив объектов товаров;
-- `_preview: string | null` - id товара, выбранного для просмотра в модальном окне;
+- `_preview: string` - id товара, выбранного для просмотра в модальном окне;
 - `events: IEvents` - экземпляр класса `EventEmitter` для инициации событий при изменении данных.
 
 Методы:
 
-- `getProduct(id: string): void` - возвращает товар по его id из массива;
+- `getProduct(id: string): IProduct` - возвращает товар по его id из массива;
 - сеттеры и геттеры для сохранения и получения данных из полей класса.
 
 #### Класс OrderData
@@ -180,19 +180,24 @@ type TOrderContacts = Pick<IOrder, 'email' | 'phone'>
 
 Поля:
 
-- `_products: TProductInBasket[]` - массив объектов товаров в том виде, в котором они будут отображаться в корзине;
-- `_order: TOrderInfo` - общая информация о заказе;
-- `events: IEvents` - экземпляр класса `EventEmitter` для инициации событий при изменении данных.
-
+- `_products: IProduct[]` - массив объектов выбранных товаров;
+- `_orderInfo: TOrderInfo` - общая информация о заказе;
+- `events: IEvents` - экземпляр класса `EventEmitter` для инициации событий при изменении данных;
+- `formErrors: Partial<Record<keyof TOrderInfo, string>>` - объект ошибок валидации.
 
 Методы:
 
-- `addProduct(product: TProductInBasket): void` - добавляет товар в корзину и вызывает событие изменения массива;
-- `deleteProduct(productId: string, callback: Function | null = null): void` - удаляет товар из корзины. Если передан колбэк, то выполняет его после удаления, если нет, то вызывает событие изменения массива;
+- `isInBasket(id: string): boolean` - проверяет, есть ли товар в корзине, по его id;
+- `addProduct(product: IProduct): void` - добавляет товар в корзину и вызывает событие изменения массива;
+- `deleteProduct(productId: string): void` - удаляет товар из корзины и вызывает событие изменения массива;
 - `clearBasket(): void` - очищает корзину;
-- `checkFormValidation(data: Record<keyof TOrderData | keyof TOrderContacts, string>): boolean` - проверяет валидность формы;
-- `checkFieldValidation(data: { field: keyof TCardInfo; value: string }): boolean` - проверяет валидность поля формы;
-- `submitOrder(callback: Function | null = null): Promise` - отправляет заказ на сервер. Если передан колбэк, то выполняет его после отправки, если нет, то вызывает событие оформления заказа;
+- `clearOrder(): void` - очищает данные заказа;
+- `getTotal(): number` - возвращает общую сумму заказа;
+- `setPayment(method: PaymentMethod): void` - устанавливает переданный способ оплаты;
+- `setOrderField(field: keyof TOrderData, value: string): void` - сохраняет данные о заказе пользователя;
+- `setContactsField(field: keyof TOrderContacts, value: string): void` - сохраняет данные контактов пользователя;
+- `validateOrder(): boolean` - проводит валидацию данных формы заказа;
+- `validateContacts(): boolean` - проводит валидацию данных формы контактов;
 - а также сеттеры и геттеры для сохранения и получения данных из полей класса.
 
 ### Слой представления (View)
@@ -213,16 +218,16 @@ type TOrderContacts = Pick<IOrder, 'email' | 'phone'>
 - сеттеры для работы с полями `_counter` и `_catalog`;
 - сеттер `locked` для блокировки/разблокировки скролла при открытии/закрытии модального окна.
 
-В классе устанавливается слушатель на кнопку корзины, при клике на которую вызывется метод `emit` класса `EventEmitter` для генерации события `modal:open`:
+В классе устанавливается слушатель на кнопку корзины, при клике на которую вызывется метод `emit` класса `EventEmitter` для генерации события `basket:open`:
 ```
 this.basketButton.addEventListener('click', () => {
-  this.events.emit('modal:open');
+  this.events.emit('basket:open');
 });
 ```
 
 #### Класс Card
 Класс отвечает за отображение карточки товара в каталоге на главной странице, при просмотре в модальном окне и в корзине.\
-Конструктор класса принимает на вход элемент контейнера, в который будет помещена карточка, а также коллбэк для кнопки (опционально).
+Конструктор класса принимает на вход элемент контейнера, в который будет помещена карточка, инстанс брокера событий, а также коллбэк для кнопки (опционально).
 
 Поля:
 
@@ -232,16 +237,18 @@ this.basketButton.addEventListener('click', () => {
 - `_title: HTMLElement` - элемент названия товара;
 - `_category: HTMLElement` - элемент категории товара;
 - `_price: HTMLElement` - элемент цены товара;
+- `_index: HTMLElement` - элемент номера товара в корзине;
 - `button: HTMLButtonElement` - элемент кнопки на карточке товара.
 
 Методы:
 
-- сеттеры и геттеры для работы с полями класса.
+- сеттеры и геттеры для работы с полями класса;
+- `toggleButton(state: boolean): void` - делает активной/неактивной кнопку на карточке при просмотре в модальном окне.
 
 Если в конструктор класса не был передан коллбэк, то устанавливается слушатель на карточку товара, при клике на которую вызывется метод `emit` класса `EventEmitter` для генерации события `product:select`. В обработчик события `product:select` передаётся объект с id товара, по которому кликнули: 
 ```
 this.container.addEventListener('click', () => {
-  this.events.emit('product:select', {id: this._id});
+  this.events.emit('product:select', { id: this._id });
 });
 ```
 
@@ -263,6 +270,7 @@ this.container.addEventListener('click', () => {
 
 - `open(): void` - открывает модальное окно;
 - `close(): void` - закрывает модальное окно;
+- `render(data: IModal): HTMLElement` - отображает контент модального окна;
 - сеттер для работы с полем `_content`.
 
 При клике на кнопку закрытия модального окна и при клике на оверлей вызывается метод `close()`.
@@ -271,17 +279,18 @@ this.container.addEventListener('click', () => {
 
 #### Класс Basket
 Класс отвечает за отображение корзины.\
-Конструктор класса принимает на вход элемент контейнера с формой, а также инстанс брокера событий.
+Конструктор класса принимает на вход элемент контейнера, а также инстанс брокера событий.
 
 Поля:
 
-- `_items: HTMLElement[]` - массив DOM-элементов, представляющих товары в корзине;
+- `_items: HTMLElement` - массив DOM-элементов, представляющих товары в корзине;
 - `_total: HTMLElement` - элемент общей стоимости заказа;
 - `button: HTMLButtonElement` - элемент кнопки оформления заказа.
 
 Методы:
 
-- сеттеры для работы с полями `_items` и `_total`.
+- сеттеры для работы с полями `_items` и `_total`;
+- `toggleButton(state: boolean): void` - делает активной/неактивной кнопку оформления заказа.
 
 В классе устанавливается слушатель на кнопку оформления заказа, при клике на которую вызывется метод `emit` класса `EventEmitter` для генерации события `basket:submit`:
 ```
@@ -296,20 +305,21 @@ this.button.addEventListener('click', () => {
 
 Поля:
 
-- `_errors: HTMLElement` - элемент для отображения ошибок валидации;
+- `_valid: boolean` - валидность формы;
+- `_errors: string` - текст ошибок валидации;
+- `errorsContainer: HTMLElement` - элемент для отображения ошибок валидации;
 - `submitButton: HTMLButtonElement` - элемент кнопки для отправки формы.
 
 Методы:
 
-- сеттер для работы с полем `_errors`;
-- сеттер `valid` для блокировки/разблокировки кнопки отправки формы взависимости от валидности введённых данных;
+- сеттеры и геттеры для работы с полями класса;
+- `clearFrom(): void` - приводит форму к начальному виду (очищает текст ошибок валидации и устанавливет валидности значение `false`;
+- `render(state: Partial<T> & IForm): HTMLElement` - отображает контент формы;
 - `onInputChange(field: keyof T, value: string): void` - обрабатывает изменения в полях формы. Внутри вызывется метод `emit` класса `EventEmitter` для генерации события `${this.container.name}:input`:
 ```
 onInputChange(field: keyof T, value: string) {
-  this.events.emit(`${this.container.name}:input`, {
-    field,
-    value
-});
+  this.events.emit(`${this.container.name}:input`, {field, value});
+}
 ```
 В классе устанавливается слушатель на форму (контейнер), при отправке которой вызывется метод `emit` класса `EventEmitter` для генерации события `${this.container.name}:submit`:
 ```
@@ -334,7 +344,7 @@ this.container.addEventListener('submit', (evt: Event) => {
 - сеттер `payment` для выбора способа оплаты;
 - сеттер для работы с полем `_address`.
 
-На кнопки выбора способа оплаты устанавливается слушатель события `mousedown`, в обработчике которого вызывается метод `onInputChange` с переданными параметрами `'payment'` и именем кнопки.
+На кнопки выбора способа оплаты устанавливается слушатель события `click`, в обработчике которого вызывается метод `onInputChange` с переданными параметрами `'payment'` и именем кнопки.
 
 #### Класс ContactsForm
 Класс отвечает за отображение формы ввода контактов покупателя.\
@@ -372,11 +382,16 @@ this.finishButton.addEventListener('click', () => {
 ### Слой коммуникации
 
 #### Класс WebLarekApi
-Предоставляет методы для взаимодействия с бэкендом сервиса. Расширяет базовый класс `Api`.
+Предоставляет методы для взаимодействия с бэкендом сервиса. Расширяет базовый класс `Api`.\
+Конструктор класса принимает на вход базовый URL для получения изображений, базовый URL для API и опции для запроса.
+
+Поля:
+
+- `cdn: string` - базовый URL для получения изображений.
 
 Методы:
 
-- `getProductList(): Promise<ApiListResponse<IProduct>>` - запрашивает список товаров с сервера;
+- `getProductList(): Promise<IProduct[]>` - запрашивает список товаров с сервера;
 - `getProductItem(id: string): Promise<IProduct>` - запрашивает информацию о конкретном товаре по переданному id;
 - `postOrder(order: IOrder): Promise<IOrderResult>` - отправляет данные о заказе на сервер.
 
@@ -391,21 +406,21 @@ this.finishButton.addEventListener('click', () => {
 
 - `catalog:changed` - событие, генерируемое при подгрузке с сервера карточек товаров;
 - `products:changed` - изменение массива товаров в корзине;
-- `product:selected` - изменение открываемой в модальном окне карточки товара;
-- `product:previewClear` - необходима очистка данных выбранной для показа в модальном окне карточки товара.
+- `preview:changed` - изменение открываемой в модальном окне карточки товара;
+- `orderFormErrors:change` - изменение ошибок валидации данных заказа;
+- `contactsFormErrors:change` - изменеие ошибок валидации данных контаков покупателя.
 
 #### События, возникающие при взаимодействии пользователя с интерфейсом (генерируются классами из представления)
 
-- `modal:open` - открытие модального окна;
-- `modal:close` - закрытие модального окна;
+- `modal:open` - блокировка скролла при открытии модального окна;
+- `modal:close` - разблокировка скролла при закрытии модального окна;
 - `product:select` - выбор товара для просмотра в модальном окне;
 - `product:add` - выбор товара для добавления в корзину;
 - `product:delete` - выбор товара для удаления из корзины;
+- `basket:open` - открытие корзины;
 - `basket:submit` - подтверждение товаров в корзине;
 - `order:input` - изменение данных в форме с данными о заказе;
 - `contacts:input` - изменение данных в форме с контактами покупателя;
 - `order:submit` - сохранение данных о заказе в форме;
 - `contacts:submit` - сохранение данных о контактах покупателя в форме;
-- `order:validation` - событие, сообщающее о необходимости валидации формы заказа;
-- `contacts:validation` - событие, сообщающее о необходимости валидации формы контактов покупателя;
 - `order:finished` - завершение оформления заказа.
